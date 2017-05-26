@@ -4,20 +4,19 @@ using System;
 
 public class MapGenerator : MonoBehaviour
 {
+    public int width = 64;
+    public int height = 36;
 
-    public int width;
-    public int height;
-
-    public string seed;
+    public string seed;                     //随机种子。
     public bool useRandomSeed;
 
     [Range(0, 100)]
-    public int randomFillPercent;
+    public int randomFillPercent = 45;      //随机填充百分比，越大洞越小。
 
     [Range(0, 10)]
-    public int smoothLevel;
+    public int smoothLevel = 4;             //平滑程度。
 
-    int[,] map;
+    int[,] map;                             //地图集，0为空洞，1为实体墙。
 
     void Start()
     {
@@ -32,6 +31,7 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
+    //生成随机地图。
     void GenerateMap()
     {
         map = new int[width, height];
@@ -42,12 +42,12 @@ public class MapGenerator : MonoBehaviour
             SmoothMap();
         }
 
-
+        //平滑渲染地图。
         MeshGenerator meshGen = GetComponent<MeshGenerator>();
         meshGen.GenerateMesh(map, 1);
     }
 
-
+    //随机填充地图。
     void RandomFillMap()
     {
         if (useRandomSeed)
@@ -73,6 +73,7 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
+    //平滑地图
     void SmoothMap()
     {
         for (int x = 0; x < width; x++)
@@ -80,16 +81,17 @@ public class MapGenerator : MonoBehaviour
             for (int y = 0; y < height; y++)
             {
                 int neighbourWallTiles = GetSurroundingWallCount(x, y);
-
-                if (neighbourWallTiles > 4)
+                
+                if (neighbourWallTiles > 4)             //周围大于四个实体墙，那自己也实体墙了。
                     map[x, y] = 1;
-                else if (neighbourWallTiles < 4)
+                else if (neighbourWallTiles < 4)        //周围大于四个为空洞，那自己也空洞了。
                     map[x, y] = 0;
-
+                //还有如果四四开，那就保持不变。
             }
         }
     }
 
+    //获取该点周围8个点为实体墙（map[x,y] == 1）的个数。
     int GetSurroundingWallCount(int gridX, int gridY)
     {
         int wallCount = 0;
