@@ -16,10 +16,12 @@ public class MapGenerator : MonoBehaviour
     [Range(0, 10)]
     public int smoothLevel = 4;             //平滑程度。
 
-    private int[,] map;                             //地图集，0为空洞，1为实体墙。
+    private int[,] map;                     //地图集，0为空洞，1为实体墙。
 
     public int wallThresholdSize = 50;      //清除小墙体的阈值。
     public int roomThresholdSize = 50;      //清除小孔的的阈值。
+
+    public int passageWidth = 4;            //通道（房间与房间直接）宽度。
 
     void Start()
     {
@@ -191,6 +193,78 @@ public class MapGenerator : MonoBehaviour
     {
         Room.ConnectRooms(roomA, roomB);
         Debug.DrawLine(CoordToWorldPoint(tileA), CoordToWorldPoint(tileB), Color.green, 100);
+
+        List<Coord> line = GetLine(tileA, tileB);
+        foreach (Coord c in line)
+            DrawCircle(c, passageWidth);
+    }
+
+    //获取两点直接线段经过的点。
+    List<Coord> GetLine(Coord from, Coord to)
+    {
+        List<Coord> line = new List<Coord>();
+
+        int x = from.tileX;
+        int y = from.tileY;
+
+        int dx = to.tileX - from.tileX;
+        int dy = to.tileY - from.tileY;
+
+        bool inverted = false;
+        int step = Math.Sign(dx);
+        int gradientStep = Math.Sign(dy);
+
+        int longest = Mathf.Abs(dx);
+        int shortest = Mathf.Abs(dy);
+
+        if (longest < shortest)
+        {
+            inverted = true;
+            longest = Mathf.Abs(dy);
+            shortest = Mathf.Abs(dx);
+
+            step = Math.Sign(dy);
+            gradientStep = Math.Sign(dx);
+        }
+
+        int gradientAccumulation = longest / 2;         //梯度积累，最长边的一半。
+        for (int i = 0; i < longest; i++)
+        {
+            line.Add(new Coord(x, y));
+
+            if (inverted)
+                y += step;
+            else
+                x += step;
+
+            gradientAccumulation += shortest;           //梯度每次增长为短边的长度。
+            if (gradientAccumulation >= longest)
+            {
+                if (inverted)
+                    x += gradientStep;
+                else
+                    y += gradientStep;
+                gradientAccumulation -= longest;
+            }
+        }
+
+        return line;
+    }
+
+    //以点c为原点，r为半径，画圈（拆墙）。
+    void DrawCircle(Coord c, int r)
+    {
+        for (int x = -r; x <= r; x++)
+            for (int y = -r; y <= r; y++)
+                if (x * x + y * y <= r * r)
+                {
+                    int drawX = c.tileX + x;
+                    int drawY = c.tileY + y;
+                    if (IsInMapRange(drawX, drawY))
+                    {
+                        map[drawX, drawY] = 0;
+                    }
+                }
     }
 
     //把xy坐标转换成实际坐标。
