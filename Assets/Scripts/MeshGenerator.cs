@@ -3,13 +3,18 @@ using System.Collections.Generic;
 
 public class MeshGenerator : MonoBehaviour
 {
+    public MeshFilter cave;                                 //渲染表层。
+    public MeshFilter walls;                                //渲染墙的网格。
+
+    public MeshCollider wallCollider;                       //墙体的Mesh Collider。
+    public int tileAmount = 10;                             //渲染瓦片数量。
+
+    public bool is2D;                                       //是否使用2D模式。
+
     //表层的洞穴渲染。
     public SquareGrid squareGrid;
     List<Vector3> vertices = new List<Vector3>();           //所有点的位置。
     List<int> triangles = new List<int>();                  //所有三角形，每连续三个点为一个三角形。
-
-    //渲染墙的网格。
-    public MeshFilter walls;
 
     //Key是顶点，Value所有含有这个顶点的三角形。
     Dictionary<int, List<Triangle>> triangleDictionary = new Dictionary<int, List<Triangle>>();
@@ -17,43 +22,74 @@ public class MeshGenerator : MonoBehaviour
     //所有外边，每一条外边是由一堆点组成一个闭合圈（第一个和最后一个点相同）。
     List<List<int>> outlines = new List<List<int>>();
 
-    HashSet<int> checkedVertices = new HashSet<int>();      //存放已经检查过的点。
-
+    HashSet<int> checkedVertices = new HashSet<int>();          //存放已经检查过的点。
+    
     public void GenerateMesh(int[,] map, float squareSize)
     {
         //清空所有队列，字典，哈希表。因为每次生成新地图都要清空。
+        #region Clear All List & Dictionary & HashSet
         vertices.Clear();
         triangles.Clear();
         triangleDictionary.Clear();
         outlines.Clear();
         checkedVertices.Clear();
+        #endregion
 
         squareGrid = new SquareGrid(map, squareSize);
 
         for (int x = 0; x < squareGrid.squares.GetLength(0); x++)
-        {
             for (int y = 0; y < squareGrid.squares.GetLength(1); y++)
-            {
-                TriangulateSquare(squareGrid.squares[x, y]);    //把所有立方体组划成一堆三角形。
-            }
+                TriangulateSquare(squareGrid.squares[x, y]);    //把所有立方体重新组成比较流畅的多边体。
+
+        cave.mesh = new Mesh();
+        cave.mesh.vertices = vertices.ToArray();
+        cave.mesh.triangles = triangles.ToArray();
+        cave.mesh.RecalculateNormals();                         //重新计算法线。
+
+        #region Render Texture With tileAmount
+        Vector2[] uvs = new Vector2[vertices.Count];            //渲染坐标。
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            float percentX = Mathf.InverseLerp(-map.GetLength(0) / 2 * squareSize, map.GetLength(0) / 2 * squareSize, vertices[i].x) * tileAmount;
+            float percentY = Mathf.InverseLerp(-map.GetLength(0) / 2 * squareSize, map.GetLength(0) / 2 * squareSize, vertices[i].z) * tileAmount;
+            uvs[i] = new Vector2(percentX, percentY);
         }
+        cave.mesh.uv = uvs;
+        #endregion
 
-        Mesh mesh = new Mesh();
-        GetComponent<MeshFilter>().mesh = mesh;
 
-        mesh.vertices = vertices.ToArray();
-        mesh.triangles = triangles.ToArray();
-        mesh.RecalculateNormals();                              //重新计算法线。
-
-        //渲染墙。
-        CreateWallMesh();
+        if (is2D)
+            Generate2DColliders();
+        else
+            CreateWallMesh();                                   //渲染墙。
     }
 
+    //生成2D碰撞框架。
+    void Generate2DColliders()
+    {
+        EdgeCollider2D[] currentColliders = gameObject.GetComponents<EdgeCollider2D>();
+        for (int i = 0; i < currentColliders.Length; i++)
+            Destroy(currentColliders[i]);
+
+        CalculateMeshOutlines();                                //计算出外边。
+
+        foreach (List<int> outline in outlines)
+        {
+            EdgeCollider2D edgeCollider = gameObject.AddComponent<EdgeCollider2D>();
+            Vector2[] edgePoints = new Vector2[outline.Count];
+
+            for (int i = 0; i < outline.Count; i++)
+                edgePoints[i] = new Vector2(vertices[outline[i]].x, vertices[outline[i]].z);
+            edgeCollider.points = edgePoints;
+        }
+    }
+
+    //创建墙网格。
     void CreateWallMesh()
     {
         CalculateMeshOutlines();                                //计算所有需要渲染的外边。
 
-        List<Vector3> wallVertices = new List<Vector3>();
+      List <Vector3> wallVertices = new List<Vector3>();
         List<int> wallTriangles = new List<int>();
         Mesh wallMesh = new Mesh();
         float wallHeight = 5;
@@ -83,6 +119,8 @@ public class MeshGenerator : MonoBehaviour
         wallMesh.vertices = wallVertices.ToArray();
         wallMesh.triangles = wallTriangles.ToArray();
         walls.mesh = wallMesh;
+
+        wallCollider.sharedMesh = wallMesh;
     }
 
     //把立方体们划成一堆三角形。
@@ -193,7 +231,7 @@ public class MeshGenerator : MonoBehaviour
         AddTriangleToDictionary(triangle.vertexIndexC, triangle);
     }
 
-    //添加（三角形顶点：Triangle结构）到字典里
+    //添加（三角形顶点：Triangle结构）到字典里。
     void AddTriangleToDictionary(int vertexIndexKey, Triangle triangle)
     {
         if (triangleDictionary.ContainsKey(vertexIndexKey))
@@ -208,9 +246,10 @@ public class MeshGenerator : MonoBehaviour
         }
     }
 
-    //计算出所有外边
+    //计算出所有外边。
     void CalculateMeshOutlines()
     {
+        //计算房间们的外边。
         for (int vertexIndex = 0; vertexIndex < vertices.Count; vertexIndex++)
         {
             if (!checkedVertices.Contains(vertexIndex))                     //检测过的点就跳过
@@ -231,8 +270,11 @@ public class MeshGenerator : MonoBehaviour
                 }
             }
         }
+        //添加最外边。
+        AddBorderLine();
     }
 
+    //以vertex继续找下一个连接点。
     void FollowOutline(int vertexIndex, int outlineIndex)
     {
         outlines[outlineIndex].Add(vertexIndex);                            //把新点加到新边里面
@@ -245,6 +287,22 @@ public class MeshGenerator : MonoBehaviour
         {
             FollowOutline(nextVertexIndex, outlineIndex);                   //找到了下一个点就递归了
         }
+    }
+
+    //添加最外层边框线。
+    void AddBorderLine()
+    {
+        int verticeIndex = vertices.Count;
+        vertices.Add(squareGrid.squares[0, 0].bottomLeft.position);
+        vertices.Add(squareGrid.squares[0, squareGrid.squares.GetLength(1) - 1].topLeft.position);
+        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, squareGrid.squares.GetLength(1) - 1].topRight.position);
+        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, 0].bottomRight.position);
+
+        List<int> borderline = new List<int>();
+        for (int i = 0; i < 4; ++i)
+            borderline.Add(verticeIndex + i);
+        borderline.Add(verticeIndex);
+        outlines.Add(borderline);
     }
 
     //如果找到外边，返回值是 原点（vertexIndex）连接到的下一个点，找不到返回-1。
@@ -325,122 +383,4 @@ public class MeshGenerator : MonoBehaviour
     //    }
     //}
 
-    struct Triangle
-    {
-        public int vertexIndexA;
-        public int vertexIndexB;
-        public int vertexIndexC;
-        int[] vertices;
-
-        public Triangle(int a, int b, int c)
-        {
-            vertexIndexA = a;
-            vertexIndexB = b;
-            vertexIndexC = c;
-
-            vertices = new int[3];
-            vertices[0] = a;
-            vertices[1] = b;
-            vertices[2] = c;
-        }
-
-        public int this[int i]
-        {
-            get { return vertices[i]; }
-        }
-
-        public bool Contains(int vertexIndex)
-        {
-            return vertexIndex == vertexIndexA || vertexIndex == vertexIndexB || vertexIndex == vertexIndexC;
-        }
-    }
-
-    public class SquareGrid
-    {
-        public Square[,] squares;
-
-        public SquareGrid(int[,] map, float squareSize)
-        {
-            int nodeCountX = map.GetLength(0);
-            int nodeCountY = map.GetLength(1);
-            float mapWidth = nodeCountX * squareSize;
-            float mapHeight = nodeCountY * squareSize;
-
-            ControlNode[,] controlNodes = new ControlNode[nodeCountX, nodeCountY];
-
-            for (int x = 0; x < nodeCountX; x++)
-            {
-                for (int y = 0; y < nodeCountY; y++)
-                {
-                    Vector3 pos = new Vector3(-mapWidth / 2 + x * squareSize + squareSize / 2, 0, -mapHeight / 2 + y * squareSize + squareSize / 2);
-                    controlNodes[x, y] = new ControlNode(pos, map[x, y] == 1, squareSize);
-                }
-            }
-
-            squares = new Square[nodeCountX - 1, nodeCountY - 1];   //因为不需要多出外边没有的点，所有最大值减一。
-            for (int x = 0; x < nodeCountX - 1; x++)            
-            {
-                for (int y = 0; y < nodeCountY - 1; y++)
-                {
-                    squares[x, y] = new Square(controlNodes[x, y + 1], controlNodes[x + 1, y + 1], controlNodes[x + 1, y], controlNodes[x, y]);
-                }
-            }
-
-        }
-    }
-
-    public class Square
-    {
-        public ControlNode topLeft, topRight, bottomRight, bottomLeft;
-        public Node centreTop, centreRight, centreBottom, centreLeft;
-        public int configuration;
-
-        public Square(ControlNode _topLeft, ControlNode _topRight, ControlNode _bottomRight, ControlNode _bottomLeft)
-        {
-            topLeft = _topLeft;
-            topRight = _topRight;
-            bottomRight = _bottomRight;
-            bottomLeft = _bottomLeft;
-
-            centreTop = topLeft.right;
-            centreRight = bottomRight.above;
-            centreBottom = bottomLeft.right;
-            centreLeft = bottomLeft.above;
-
-            //configuration相当于标志位
-            if (topLeft.active)
-                configuration += 8;
-            if (topRight.active)
-                configuration += 4;
-            if (bottomRight.active)
-                configuration += 2;
-            if (bottomLeft.active)
-                configuration += 1;
-        }
-    }
-
-    public class Node
-    {
-        public Vector3 position;
-        public int vertexIndex = -1;
-
-        public Node(Vector3 _pos)
-        {
-            position = _pos;
-        }
-    }
-
-    public class ControlNode : Node
-    {
-        public bool active;
-        public Node above, right;           //一个方形的上边居中点，还有右边居中点。
-
-        public ControlNode(Vector3 _pos, bool _active, float squareSize) : base(_pos)
-        {
-            active = _active;
-            above = new Node(position + Vector3.forward * squareSize / 2f);
-            right = new Node(position + Vector3.right * squareSize / 2f);
-        }
-
-    }
 }

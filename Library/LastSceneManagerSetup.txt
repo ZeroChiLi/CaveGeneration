@@ -1,4 +1,4 @@
 sceneSetups:
-- path: Assets/CaveGeneration.unity
+- path: Assets/CaveGeneration 3D.unity
   isLoaded: 1
   isActive: 1
