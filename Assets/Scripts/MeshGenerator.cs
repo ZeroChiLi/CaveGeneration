@@ -23,7 +23,7 @@ public class MeshGenerator : MonoBehaviour
     List<List<int>> outlines = new List<List<int>>();
 
     HashSet<int> checkedVertices = new HashSet<int>();          //存放已经检查过的点。
-    
+
     public void GenerateMesh(int[,] map, float squareSize)
     {
         //清空所有队列，字典，哈希表。因为每次生成新地图都要清空。
@@ -41,27 +41,34 @@ public class MeshGenerator : MonoBehaviour
             for (int y = 0; y < squareGrid.squares.GetLength(1); y++)
                 TriangulateSquare(squareGrid.squares[x, y]);    //把所有立方体重新组成比较流畅的多边体。
 
+        SetCaveMesh(map.GetLength(0) * squareSize);             //给Cave添加mesh。
+
+        CalculateMeshOutlines();                                //计算所有需要渲染的外边。
+
+        AddBorderLine();                                        //添加最外边。
+
+        if (is2D)
+            Generate2DColliders();                              //生成2D轮廓碰撞框。
+        else
+            CreateWallMesh();                                   //渲染墙。
+    }
+
+    //更新新的Mesh到Cave.mesh上。
+    void SetCaveMesh(float meshSize)
+    {
         cave.mesh = new Mesh();
         cave.mesh.vertices = vertices.ToArray();
         cave.mesh.triangles = triangles.ToArray();
         cave.mesh.RecalculateNormals();                         //重新计算法线。
 
-        #region Render Texture With tileAmount
         Vector2[] uvs = new Vector2[vertices.Count];            //渲染坐标。
         for (int i = 0; i < vertices.Count; i++)
         {
-            float percentX = Mathf.InverseLerp(-map.GetLength(0) / 2 * squareSize, map.GetLength(0) / 2 * squareSize, vertices[i].x) * tileAmount;
-            float percentY = Mathf.InverseLerp(-map.GetLength(0) / 2 * squareSize, map.GetLength(0) / 2 * squareSize, vertices[i].z) * tileAmount;
+            float percentX = Mathf.InverseLerp(-meshSize / 2, meshSize / 2, vertices[i].x) * tileAmount;
+            float percentY = Mathf.InverseLerp(-meshSize / 2, meshSize / 2, vertices[i].z) * tileAmount;
             uvs[i] = new Vector2(percentX, percentY);
         }
         cave.mesh.uv = uvs;
-        #endregion
-
-
-        if (is2D)
-            Generate2DColliders();
-        else
-            CreateWallMesh();                                   //渲染墙。
     }
 
     //生成2D碰撞框架。
@@ -70,8 +77,6 @@ public class MeshGenerator : MonoBehaviour
         EdgeCollider2D[] currentColliders = gameObject.GetComponents<EdgeCollider2D>();
         for (int i = 0; i < currentColliders.Length; i++)
             Destroy(currentColliders[i]);
-
-        CalculateMeshOutlines();                                //计算出外边。
 
         foreach (List<int> outline in outlines)
         {
@@ -87,9 +92,8 @@ public class MeshGenerator : MonoBehaviour
     //创建墙网格。
     void CreateWallMesh()
     {
-        CalculateMeshOutlines();                                //计算所有需要渲染的外边。
 
-      List <Vector3> wallVertices = new List<Vector3>();
+        List<Vector3> wallVertices = new List<Vector3>();
         List<int> wallTriangles = new List<int>();
         Mesh wallMesh = new Mesh();
         float wallHeight = 5;
@@ -193,7 +197,13 @@ public class MeshGenerator : MonoBehaviour
     //把一组点划成一堆三角形。
     void MeshFromPoints(params Node[] points)
     {
-        AssignVertices(points);
+        //添加到新点到顶点列表（不重复）。
+        for (int i = 0; i < points.Length; i++)
+            if (points[i].vertexIndex == -1)
+            {
+                points[i].vertexIndex = vertices.Count;
+                vertices.Add(points[i].position);
+            }
 
         if (points.Length >= 3)
             CreateTriangle(points[0], points[1], points[2]);
@@ -203,19 +213,6 @@ public class MeshGenerator : MonoBehaviour
             CreateTriangle(points[0], points[3], points[4]);
         if (points.Length >= 6)
             CreateTriangle(points[0], points[4], points[5]);
-    }
-
-    //添加到新点到顶点列表（不重复）。
-    void AssignVertices(Node[] points)
-    {
-        for (int i = 0; i < points.Length; i++)
-        {
-            if (points[i].vertexIndex == -1)
-            {
-                points[i].vertexIndex = vertices.Count;         //把点
-                vertices.Add(points[i].position);
-            }
-        }
     }
 
     //创建三角形，一个是包含所有三角形点的队列（triangles），还有是添加到字典三角形（triangle）。
@@ -251,7 +248,6 @@ public class MeshGenerator : MonoBehaviour
     {
         //计算房间们的外边。
         for (int vertexIndex = 0; vertexIndex < vertices.Count; vertexIndex++)
-        {
             if (!checkedVertices.Contains(vertexIndex))                     //检测过的点就跳过
             {
                 int newOutlineVertex = GetConnectedOutlineVertex(vertexIndex);
@@ -269,9 +265,6 @@ public class MeshGenerator : MonoBehaviour
                     outlines[outlines.Count - 1].Add(vertexIndex);          //最后把原点加上去，形成一个闭合的外边
                 }
             }
-        }
-        //添加最外边。
-        AddBorderLine();
     }
 
     //以vertex继续找下一个连接点。
@@ -284,26 +277,9 @@ public class MeshGenerator : MonoBehaviour
         int nextVertexIndex = GetConnectedOutlineVertex(vertexIndex);       //继续找下一个外边点
 
         if (nextVertexIndex != -1)
-        {
             FollowOutline(nextVertexIndex, outlineIndex);                   //找到了下一个点就递归了
-        }
     }
 
-    //添加最外层边框线。
-    void AddBorderLine()
-    {
-        int verticeIndex = vertices.Count;
-        vertices.Add(squareGrid.squares[0, 0].bottomLeft.position);
-        vertices.Add(squareGrid.squares[0, squareGrid.squares.GetLength(1) - 1].topLeft.position);
-        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, squareGrid.squares.GetLength(1) - 1].topRight.position);
-        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, 0].bottomRight.position);
-
-        List<int> borderline = new List<int>();
-        for (int i = 0; i < 4; ++i)
-            borderline.Add(verticeIndex + i);
-        borderline.Add(verticeIndex);
-        outlines.Add(borderline);
-    }
 
     //如果找到外边，返回值是 原点（vertexIndex）连接到的下一个点，找不到返回-1。
     int GetConnectedOutlineVertex(int vertexIndex)
@@ -313,17 +289,12 @@ public class MeshGenerator : MonoBehaviour
         for (int i = 0; i < trianglesContainingVertex.Count; i++)
         {
             Triangle triangle = trianglesContainingVertex[i];
-
             for (int j = 0; j < 3; j++)
             {
                 int vertexB = triangle[j];
                 if (vertexB != vertexIndex && !checkedVertices.Contains(vertexB))   //获取三角形内除了自己而且没检查过的点
-                {
                     if (IsOutlineEdge(vertexIndex, vertexB))                //判断能否组成外边
-                    {
                         return vertexB;
-                    }
-                }
             }
         }
 
@@ -350,33 +321,58 @@ public class MeshGenerator : MonoBehaviour
         return sharedTriangleCount == 1;
     }
 
+    //添加最外层边框线。
+    void AddBorderLine()
+    {
+        int verticeIndex = vertices.Count;
+        vertices.Add(squareGrid.squares[0, 0].bottomLeft.position);
+        vertices.Add(squareGrid.squares[0, squareGrid.squares.GetLength(1) - 1].topLeft.position);
+        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, squareGrid.squares.GetLength(1) - 1].topRight.position);
+        vertices.Add(squareGrid.squares[squareGrid.squares.GetLength(0) - 1, 0].bottomRight.position);
+
+        List<int> borderline = new List<int>();
+        for (int i = 0; i < 4; ++i)
+            borderline.Add(verticeIndex + i);
+        borderline.Add(verticeIndex);
+        outlines.Add(borderline);
+    }
+
     //void OnDrawGizmos()
     //{
+    //    Color wallColor = new Color(1, 181f / 255f, 21f / 255f);
+    //    Color emptyColor = wallColor;
+    //    //Color emptyColor = Color.white;
+    //    Color nodeColor = new Color(82f / 255f, 120f / 255f, 252f / 255f);
+    //    Color squareColor = new Color(0, 76f / 255f, 26f / 255f);
+
     //    if (squareGrid != null)
     //    {
     //        for (int x = 0; x < squareGrid.squares.GetLength(0); x++)
     //        {
     //            for (int y = 0; y < squareGrid.squares.GetLength(1); y++)
     //            {
+    //                Gizmos.color = squareColor;
+    //                Gizmos.DrawWireCube((squareGrid.squares[x, y].centreLeft.position + squareGrid.squares[x, y].centreRight.position) / 2, Vector3.one);
 
-    //                Gizmos.color = (squareGrid.squares[x, y].topLeft.active) ? Color.black : Color.white;
+    //                Gizmos.color = (squareGrid.squares[x, y].topLeft.active) ? wallColor : emptyColor;
     //                Gizmos.DrawCube(squareGrid.squares[x, y].topLeft.position, Vector3.one * .4f);
 
-    //                Gizmos.color = (squareGrid.squares[x, y].topRight.active) ? Color.black : Color.white;
+    //                Gizmos.color = (squareGrid.squares[x, y].topRight.active) ? wallColor : emptyColor;
     //                Gizmos.DrawCube(squareGrid.squares[x, y].topRight.position, Vector3.one * .4f);
 
-    //                Gizmos.color = (squareGrid.squares[x, y].bottomRight.active) ? Color.black : Color.white;
+    //                Gizmos.color = (squareGrid.squares[x, y].bottomRight.active) ? wallColor : emptyColor;
     //                Gizmos.DrawCube(squareGrid.squares[x, y].bottomRight.position, Vector3.one * .4f);
 
-    //                Gizmos.color = (squareGrid.squares[x, y].bottomLeft.active) ? Color.black : Color.white;
+    //                Gizmos.color = (squareGrid.squares[x, y].bottomLeft.active) ? wallColor : emptyColor;
     //                Gizmos.DrawCube(squareGrid.squares[x, y].bottomLeft.position, Vector3.one * .4f);
 
 
-    //                Gizmos.color = Color.grey;
+    //                Gizmos.color = nodeColor;
     //                Gizmos.DrawCube(squareGrid.squares[x, y].centreTop.position, Vector3.one * .15f);
     //                Gizmos.DrawCube(squareGrid.squares[x, y].centreRight.position, Vector3.one * .15f);
     //                Gizmos.DrawCube(squareGrid.squares[x, y].centreBottom.position, Vector3.one * .15f);
     //                Gizmos.DrawCube(squareGrid.squares[x, y].centreLeft.position, Vector3.one * .15f);
+
 
     //            }
     //        }

@@ -4,6 +4,8 @@ using System;
 
 public class MapGenerator : MonoBehaviour
 {
+    private int[,] map;                     //地图集，0为空洞，1为实体墙。
+
     public int width = 64;
     public int height = 36;
 
@@ -16,12 +18,15 @@ public class MapGenerator : MonoBehaviour
     [Range(0, 10)]
     public int smoothLevel = 4;             //平滑程度。
 
-    private int[,] map;                     //地图集，0为空洞，1为实体墙。
-
     public int wallThresholdSize = 50;      //清除小墙体的阈值。
     public int roomThresholdSize = 50;      //清除小孔的的阈值。
 
     public int passageWidth = 4;            //通道（房间与房间直接）宽度。
+
+    public int borderSize = 1;
+
+    //存放最后实际有效的空洞房间。
+    private List<Room> survivingRooms = new List<Room>();
 
     void Start()
     {
@@ -32,6 +37,7 @@ public class MapGenerator : MonoBehaviour
     {
         if (Input.GetMouseButtonDown(0))
         {
+            survivingRooms.Clear();
             GenerateMap();
         }
     }
@@ -48,9 +54,17 @@ public class MapGenerator : MonoBehaviour
         //清除小洞，小墙，连接房间。
         ProcessMap();
 
-        #region Border
-        //增加边界墙。
-        int borderSize = 1;
+        //连接各个幸存房间。
+        ConnectClosestRooms(survivingRooms);
+
+        //渲染地图。
+        MeshGenerator meshGen = GetComponent<MeshGenerator>();
+        meshGen.GenerateMesh(CrateStaticBorder(), 1);
+    }
+
+    //创建额外边界，这边界不参与任何地图计算
+    int[,] CrateStaticBorder()
+    {
         int[,] borderedMap = new int[width + borderSize * 2, height + borderSize * 2];
 
         for (int x = 0; x < borderedMap.GetLength(0); x++)
@@ -59,14 +73,10 @@ public class MapGenerator : MonoBehaviour
                     borderedMap[x, y] = map[x - borderSize, y - borderSize];
                 else
                     borderedMap[x, y] = 1;
-        #endregion
-
-        //渲染地图。
-        MeshGenerator meshGen = GetComponent<MeshGenerator>();
-        meshGen.GenerateMesh(borderedMap, 1);
+        return borderedMap;
     }
 
-    //加工地图，清除小洞，小墙，连接房间。可以优化，一次遍历，判断墙或空洞，分别存到队列，而不是遍历两次。
+    //加工地图，清除小洞，小墙，连接房间。
     void ProcessMap()
     {
         //获取最大房间的索引
@@ -79,8 +89,6 @@ public class MapGenerator : MonoBehaviour
                     map[tile.tileX, tile.tileY] = 0;                //把小于阈值的都铲掉。
 
 
-        //存放没被删掉的空洞房间。
-        List<Room> survivingRooms = new List<Room>();
         //获取空洞区域
         List<List<Coord>> roomRegions = GetRegions(0);
         foreach (List<Coord> roomRegion in roomRegions)
@@ -93,18 +101,18 @@ public class MapGenerator : MonoBehaviour
                 survivingRooms.Add(new Room(roomRegion, map));      //添加到幸存房间列表里。
                 if (maxSize < roomRegion.Count)
                 {
-                    maxSize = roomRegion.Count; 
+                    maxSize = roomRegion.Count;
                     maxIndex = currentIndex;                        //找出最大房间的索引。
                 }
                 ++currentIndex;
             }
         }
 
+        if(survivingRooms.Count == 0)
+            Debug.LogError("No Survived Rooms Here!!");
+
         survivingRooms[maxIndex].isMainRoom = true;                 //最大房间就是主房间。
         survivingRooms[maxIndex].isAccessibleFromMainRoom = true;
-
-        //连接各个幸存房间。
-        ConnectClosestRooms(survivingRooms);
     }
 
     //连接各个房间。每个房间两两比较，找到最近房间（相对前一个房间）连接之，对第二个房间来说不一定就是最近的。
@@ -124,7 +132,7 @@ public class MapGenerator : MonoBehaviour
                 else
                     roomListA.Add(room);                            //没有连接到主房间的加到ListA。
         }
-        else                                                        
+        else
         {
             roomListA = allRooms;
             roomListB = allRooms;
@@ -180,7 +188,7 @@ public class MapGenerator : MonoBehaviour
         //第一步到第二步：当连接完所有房间，但是还没有要求全部连接到主房间，那就开始连接到主房间。
         if (!forceAccessibilityFromMainRoom)
             ConnectClosestRooms(allRooms, true);
-        
+
         //第二步：当成功找到能连接到主房间，通路，继续找一下个能需要连到主房间的房间。
         if (possibleConnectionFound && forceAccessibilityFromMainRoom)
         {
@@ -196,8 +204,8 @@ public class MapGenerator : MonoBehaviour
         //Debug.DrawLine(CoordToWorldPoint(tileA), CoordToWorldPoint(tileB), Color.green, 100);
 
         List<Coord> line = GetLine(tileA, tileB);
-        foreach (Coord c in line)
-            DrawCircle(c, passageWidth);
+        foreach (Coord coord in line)
+            DrawCircle(coord, passageWidth);
     }
 
     //获取两点直接线段经过的点。
@@ -334,33 +342,22 @@ public class MapGenerator : MonoBehaviour
     void RandomFillMap()
     {
         if (useRandomSeed)
-        {
             seed = Time.time.ToString();
-        }
 
         System.Random pseudoRandom = new System.Random(seed.GetHashCode());
 
         for (int x = 0; x < width; x++)
-        {
             for (int y = 0; y < height; y++)
-            {
                 if (x == 0 || x == width - 1 || y == 0 || y == height - 1)
-                {
                     map[x, y] = 1;
-                }
                 else
-                {
                     map[x, y] = (pseudoRandom.Next(0, 100) < randomFillPercent) ? 1 : 0;
-                }
-            }
-        }
     }
 
     //平滑地图
     void SmoothMap()
     {
         for (int x = 0; x < width; x++)
-        {
             for (int y = 0; y < height; y++)
             {
                 int neighbourWallTiles = GetSurroundingWallCount(x, y);
@@ -371,7 +368,6 @@ public class MapGenerator : MonoBehaviour
                     map[x, y] = 0;
                 //还有如果四四开，那就保持不变。
             }
-        }
     }
 
     //获取该点周围8个点为实体墙（map[x,y] == 1）的个数。
@@ -399,14 +395,14 @@ public class MapGenerator : MonoBehaviour
     //        {
     //            for (int y = 0; y < height; y++)
     //            {
-    //                Gizmos.color = (map[x, y] == 1) ? Color.green : Color.blue;
+    //                Gizmos.color = (map[x, y] == 1) ? new Color(0, 0, 0, 1f) : new Color(1, 1, 1, 1f);
     //                Vector3 pos = new Vector3(-width / 2 + x + .5f, 0, -height / 2 + y + .5f);
+    //                pos.y = pos.y + 2;
     //                Gizmos.DrawCube(pos, Vector3.one);
     //            }
     //        }
     //    }
     //}
 
-    //坐标
 
 }
