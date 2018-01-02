@@ -2,10 +2,11 @@
 using System.Collections.Generic;
 using System;
 
+public enum TileType { Empty, Wall }
+
 public class MapGenerator : MonoBehaviour
 {
-    private int[,] map;                     //地图集，0为空洞，1为实体墙。
-
+    #region Public Variables
     public int width = 64;
     public int height = 36;
 
@@ -15,7 +16,7 @@ public class MapGenerator : MonoBehaviour
     [Range(0, 100)]
     public int randomFillPercent = 45;      //随机填充百分比，越大洞越小。
 
-    [Range(0, 10)]
+    [Range(0, 20)]
     public int smoothLevel = 4;             //平滑程度。
 
     public int wallThresholdSize = 50;      //清除小墙体的阈值。
@@ -25,15 +26,22 @@ public class MapGenerator : MonoBehaviour
 
     public int borderSize = 1;
 
+    public bool showGizmos;
+    #endregion
+
+    private TileType[,] map;                     //地图集，Empty为空洞，Wall为实体墙。
+
+    readonly int[,] upDownLeftRight = new int[4, 2] { { 0, 1 }, { 0, -1 }, { -1, 0 }, { 1, 0 } };
+
     //存放最后实际有效的空洞房间。
     private List<Room> survivingRooms = new List<Room>();
 
-    void Start()
+    private void Start()
     {
         GenerateMap();
     }
 
-    void Update()
+    private void Update()
     {
         if (Input.GetMouseButtonDown(0))
         {
@@ -43,15 +51,15 @@ public class MapGenerator : MonoBehaviour
     }
 
     //生成随机地图。
-    void GenerateMap()
+    private void GenerateMap()
     {
-        map = new int[width, height];
+        map = new TileType[width, height];
         RandomFillMap();
 
         for (int i = 0; i < smoothLevel; i++)
             SmoothMap();
 
-        //清除小洞，小墙，连接房间。
+        //清除小洞，小墙。
         ProcessMap();
 
         //连接各个幸存房间。
@@ -62,40 +70,75 @@ public class MapGenerator : MonoBehaviour
         meshGen.GenerateMesh(CrateStaticBorder(), 1);
     }
 
-    //创建额外边界，这边界不参与任何地图计算
-    int[,] CrateStaticBorder()
+    //随机填充地图。
+    private void RandomFillMap()
     {
-        int[,] borderedMap = new int[width + borderSize * 2, height + borderSize * 2];
+        if (useRandomSeed)
+            seed = Time.time.ToString();
 
-        for (int x = 0; x < borderedMap.GetLength(0); x++)
-            for (int y = 0; y < borderedMap.GetLength(1); y++)
-                if (x >= borderSize && x < width + borderSize && y >= borderSize && y < height + borderSize)
-                    borderedMap[x, y] = map[x - borderSize, y - borderSize];
+        System.Random pseudoRandom = new System.Random(seed.GetHashCode());
+
+        for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
+                if (x == 0 || x == width - 1 || y == 0 || y == height - 1)
+                    map[x, y] = TileType.Wall;
                 else
-                    borderedMap[x, y] = 1;
-        return borderedMap;
+                    map[x, y] = (pseudoRandom.Next(0, 100) < randomFillPercent) ? TileType.Wall : TileType.Empty;
+    }
+
+    //平滑地图
+    private void SmoothMap()
+    {
+        for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
+            {
+                int neighbourWallTiles = GetSurroundingWallCount(x, y);
+
+                if (neighbourWallTiles > 4)             //周围大于四个实体墙，那自己也实体墙了。
+                    map[x, y] = TileType.Wall;
+                else if (neighbourWallTiles < 4)        //周围大于四个为空洞，那自己也空洞了。
+                    map[x, y] = TileType.Empty;
+                //还有如果四四开，那就保持不变。
+            }
+    }
+
+    //获取该点周围8个点为实体墙（map[x,y] == 1）的个数。
+    private int GetSurroundingWallCount(int gridX, int gridY)
+    {
+        int wallCount = 0;
+        for (int neighbourX = gridX - 1; neighbourX <= gridX + 1; neighbourX++)
+            for (int neighbourY = gridY - 1; neighbourY <= gridY + 1; neighbourY++)
+                if (neighbourX >= 0 && neighbourX < width && neighbourY >= 0 && neighbourY < height)
+                {
+                    if (neighbourX != gridX || neighbourY != gridY)
+                        wallCount += map[neighbourX, neighbourY] == TileType.Wall ? 1 : 0;
+                }
+                else
+                    wallCount++;
+
+        return wallCount;
     }
 
     //加工地图，清除小洞，小墙，连接房间。
-    void ProcessMap()
+    private void ProcessMap()
     {
         //获取最大房间的索引
         int currentIndex = 0, maxIndex = 0, maxSize = 0;
         //获取墙区域
-        List<List<Coord>> wallRegions = GetRegions(1);
+        List<List<Coord>> wallRegions = GetRegions(TileType.Wall);
         foreach (List<Coord> wallRegion in wallRegions)
             if (wallRegion.Count < wallThresholdSize)
                 foreach (Coord tile in wallRegion)
-                    map[tile.tileX, tile.tileY] = 0;                //把小于阈值的都铲掉。
+                    map[tile.tileX, tile.tileY] = TileType.Empty;                //把小于阈值的都铲掉。
 
 
         //获取空洞区域
-        List<List<Coord>> roomRegions = GetRegions(0);
+        List<List<Coord>> roomRegions = GetRegions(TileType.Empty);
         foreach (List<Coord> roomRegion in roomRegions)
         {
             if (roomRegion.Count < roomThresholdSize)
                 foreach (Coord tile in roomRegion)
-                    map[tile.tileX, tile.tileY] = 1;                //把小于阈值的都填充。
+                    map[tile.tileX, tile.tileY] = TileType.Wall;                //把小于阈值的都填充。
             else
             {
                 survivingRooms.Add(new Room(roomRegion, map));      //添加到幸存房间列表里。
@@ -108,17 +151,62 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        if(survivingRooms.Count == 0)
+        if (survivingRooms.Count == 0)
             Debug.LogError("No Survived Rooms Here!!");
+        else
+        {
+            survivingRooms[maxIndex].isMainRoom = true;                 //最大房间就是主房间。
+            survivingRooms[maxIndex].isAccessibleFromMainRoom = true;
+        }
+    }
 
-        survivingRooms[maxIndex].isMainRoom = true;                 //最大房间就是主房间。
-        survivingRooms[maxIndex].isAccessibleFromMainRoom = true;
+    //获取区域
+    private List<List<Coord>> GetRegions(TileType tileType)
+    {
+        List<List<Coord>> regions = new List<List<Coord>>();
+        bool[,] mapFlags = new bool[width, height];
+
+        for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
+                if (mapFlags[x, y] == false && map[x, y] == tileType)
+                    regions.Add(GetRegionTiles(x, y, tileType, ref mapFlags));
+
+        return regions;
+    }
+
+    //从这个点开始获取区域，广度优先算法。
+    private List<Coord> GetRegionTiles(int startX, int startY, TileType tileType, ref bool[,] mapFlags)
+    {
+        List<Coord> tiles = new List<Coord>();
+        Queue<Coord> queue = new Queue<Coord>();
+        queue.Enqueue(new Coord(startX, startY));
+        mapFlags[startX, startY] = true;
+
+        while (queue.Count > 0)
+        {
+            Coord tile = queue.Dequeue();                       //弹出队列第一个，添加到要返回的列表里面。
+            tiles.Add(tile);
+
+            // 遍历上下左右四格
+            for (int i = 0; i < 4; i++)
+            {
+                int x = tile.tileX + upDownLeftRight[i, 0];
+                int y = tile.tileY + upDownLeftRight[i, 1];
+                if (IsInMapRange(x, y) && mapFlags[x, y] == false && map[x, y] == tileType)
+                {
+                    mapFlags[x, y] = true;
+                    queue.Enqueue(new Coord(x, y));
+                }
+            }
+        }
+
+        return tiles;
     }
 
     //连接各个房间。每个房间两两比较，找到最近房间（相对前一个房间）连接之，对第二个房间来说不一定就是最近的。
     //第二个参数为False时，第一步操作：为所有房间都连接到最近房间。
     //第二个参数为True时，第二步操作：就是把所有房间都连接到主房间。
-    void ConnectClosestRooms(List<Room> allRooms, bool forceAccessibilityFromMainRoom = false)
+    private void ConnectClosestRooms(List<Room> allRooms, bool forceAccessibilityFromMainRoom = false)
     {
         #region 属于第二步操作：roomListA 是还没连接到主房间的房间队列， roomListB 是已经连接到房间B的队列。
         List<Room> roomListA = new List<Room>();
@@ -130,7 +218,7 @@ public class MapGenerator : MonoBehaviour
                 if (room.isAccessibleFromMainRoom)
                     roomListB.Add(room);                            //已经连接到主房间的加到ListB。
                 else
-                    roomListA.Add(room);                            //没有连接到主房间的加到ListA。
+                    roomListA.Add(room);                            //没有连接到主房间的加到ListA。为空时将结束递归。
         }
         else
         {
@@ -154,7 +242,7 @@ public class MapGenerator : MonoBehaviour
                 if (roomA.connectedRooms.Count > 0)                 //有连接房间，跳过，继续找下一个连接房间。
                     continue;
             }
-            #region 遍历roomListB找到最近的roomB。
+            #region 遍历roomListB，找到距离当前roomA最近的roomB。
             foreach (Room roomB in roomListB)
             {
                 if (roomA == roomB || roomA.IsConnected(roomB))
@@ -165,7 +253,7 @@ public class MapGenerator : MonoBehaviour
                     {
                         Coord tileA = roomA.edgeTiles[tileIndexA];
                         Coord tileB = roomB.edgeTiles[tileIndexB];
-                        int distanceBetweenRooms = (int)(Mathf.Pow(tileA.tileX - tileB.tileX, 2) + Mathf.Pow(tileA.tileY - tileB.tileY, 2));
+                        int distanceBetweenRooms = (int)tileA.SqrMagnitude(tileB);
 
                         //如果找到更近的（相对roomA）房间，更新最短路径。
                         if (distanceBetweenRooms < bestDistance || !possibleConnectionFound)
@@ -198,7 +286,7 @@ public class MapGenerator : MonoBehaviour
     }
 
     //创建两个房间的通道。
-    void CreatePassage(Room roomA, Room roomB, Coord tileA, Coord tileB)
+    private void CreatePassage(Room roomA, Room roomB, Coord tileA, Coord tileB)
     {
         Room.ConnectRooms(roomA, roomB);
         //Debug.DrawLine(CoordToWorldPoint(tileA), CoordToWorldPoint(tileB), Color.green, 100);
@@ -209,7 +297,7 @@ public class MapGenerator : MonoBehaviour
     }
 
     //获取两点直接线段经过的点。
-    List<Coord> GetLine(Coord from, Coord to)
+    private List<Coord> GetLine(Coord from, Coord to)
     {
         List<Coord> line = new List<Coord>();
 
@@ -261,7 +349,7 @@ public class MapGenerator : MonoBehaviour
     }
 
     //以点c为原点，r为半径，画圈（拆墙）。
-    void DrawCircle(Coord c, int r)
+    private void DrawCircle(Coord c, int r)
     {
         for (int x = -r; x <= r; x++)
             for (int y = -r; y <= r; y++)
@@ -270,139 +358,52 @@ public class MapGenerator : MonoBehaviour
                     int drawX = c.tileX + x;
                     int drawY = c.tileY + y;
                     if (IsInMapRange(drawX, drawY))
-                    {
-                        map[drawX, drawY] = 0;
-                    }
+                        map[drawX, drawY] = TileType.Empty;
                 }
     }
 
     //把xy坐标转换成实际坐标。
-    Vector3 CoordToWorldPoint(Coord tile)
+    private Vector3 CoordToWorldPoint(Coord tile)
     {
         return new Vector3(-width / 2 + .5f + tile.tileX, 2, -height / 2 + .5f + tile.tileY);
     }
 
-    //获取区域，0为空洞，1为墙
-    List<List<Coord>> GetRegions(int tileType)
-    {
-        List<List<Coord>> regions = new List<List<Coord>>();
-        int[,] mapFlags = new int[width, height];
-
-        for (int x = 0; x < width; x++)
-            for (int y = 0; y < height; y++)
-                if (mapFlags[x, y] == 0 && map[x, y] == tileType)
-                {
-                    List<Coord> newRegion = GetRegionTiles(x, y);
-                    regions.Add(newRegion);
-
-                    foreach (Coord tile in newRegion)
-                        mapFlags[tile.tileX, tile.tileY] = 1;   //把获得的新区域再遍历一遍，标记检测过。可以放下面函数优化一下。
-                }
-
-        return regions;
-    }
-
-    //从这个点开始获取区域，广度优先算法。
-    List<Coord> GetRegionTiles(int startX, int startY)
-    {
-        List<Coord> tiles = new List<Coord>();
-        int[,] mapFlags = new int[width, height];               //标志是否走过。1为走过。
-        int tileType = map[startX, startY];                     //把传进来的点的类型（墙或空洞）作为标准类型。
-
-        Queue<Coord> queue = new Queue<Coord>();
-        queue.Enqueue(new Coord(startX, startY));
-        mapFlags[startX, startY] = 1;
-
-        while (queue.Count > 0)
-        {
-            Coord tile = queue.Dequeue();                       //弹出队列第一个，添加到要返回的列表里面。
-            tiles.Add(tile);
-
-            //二重循环加if，其实就是上下左右四格，而且没走过的，符合类型（墙或空洞）的。
-            for (int x = tile.tileX - 1; x <= tile.tileX + 1; x++)
-                for (int y = tile.tileY - 1; y <= tile.tileY + 1; y++)
-                    if (IsInMapRange(x, y) && (y == tile.tileY || x == tile.tileX))
-                        if (mapFlags[x, y] == 0 && map[x, y] == tileType)
-                        {
-                            mapFlags[x, y] = 1;
-                            queue.Enqueue(new Coord(x, y));
-                        }
-        }
-
-        return tiles;
-    }
-
     //判断坐标是否在地图里，不管墙还是洞。
-    bool IsInMapRange(int x, int y)
+    private bool IsInMapRange(int x, int y)
     {
         return x >= 0 && x < width && y >= 0 && y < height;
     }
 
-    //随机填充地图。
-    void RandomFillMap()
+    //创建额外边界，这边界不参与任何地图计算
+    private TileType[,] CrateStaticBorder()
     {
-        if (useRandomSeed)
-            seed = Time.time.ToString();
+        TileType[,] borderedMap = new TileType[width + borderSize * 2, height + borderSize * 2];
 
-        System.Random pseudoRandom = new System.Random(seed.GetHashCode());
-
-        for (int x = 0; x < width; x++)
-            for (int y = 0; y < height; y++)
-                if (x == 0 || x == width - 1 || y == 0 || y == height - 1)
-                    map[x, y] = 1;
+        for (int x = 0; x < borderedMap.GetLength(0); x++)
+            for (int y = 0; y < borderedMap.GetLength(1); y++)
+                if (x >= borderSize && x < width + borderSize && y >= borderSize && y < height + borderSize)
+                    borderedMap[x, y] = map[x - borderSize, y - borderSize];
                 else
-                    map[x, y] = (pseudoRandom.Next(0, 100) < randomFillPercent) ? 1 : 0;
+                    borderedMap[x, y] = TileType.Wall;
+        return borderedMap;
     }
 
-    //平滑地图
-    void SmoothMap()
+    private void OnDrawGizmos()
     {
-        for (int x = 0; x < width; x++)
-            for (int y = 0; y < height; y++)
+        if (showGizmos && map != null)
+        {
+            for (int x = 0; x < width; x++)
             {
-                int neighbourWallTiles = GetSurroundingWallCount(x, y);
-
-                if (neighbourWallTiles > 4)             //周围大于四个实体墙，那自己也实体墙了。
-                    map[x, y] = 1;
-                else if (neighbourWallTiles < 4)        //周围大于四个为空洞，那自己也空洞了。
-                    map[x, y] = 0;
-                //还有如果四四开，那就保持不变。
-            }
-    }
-
-    //获取该点周围8个点为实体墙（map[x,y] == 1）的个数。
-    int GetSurroundingWallCount(int gridX, int gridY)
-    {
-        int wallCount = 0;
-        for (int neighbourX = gridX - 1; neighbourX <= gridX + 1; neighbourX++)
-            for (int neighbourY = gridY - 1; neighbourY <= gridY + 1; neighbourY++)
-                if (neighbourX >= 0 && neighbourX < width && neighbourY >= 0 && neighbourY < height)
+                for (int y = 0; y < height; y++)
                 {
-                    if (neighbourX != gridX || neighbourY != gridY)
-                        wallCount += map[neighbourX, neighbourY];
+                    Gizmos.color = (map[x, y] == TileType.Wall) ? new Color(0, 0, 0, 1f) : new Color(1, 1, 1, 1f);
+                    Vector3 pos = new Vector3(-width / 2 + x + .5f, 0, -height / 2 + y + .5f);
+                    pos.y = pos.y + 2;
+                    Gizmos.DrawCube(pos, Vector3.one);
                 }
-                else
-                    wallCount++;
-
-        return wallCount;
+            }
+        }
     }
-
-    //void OnDrawGizmos()
-    //{
-    //    if (map != null)
-    //    {
-    //        for (int x = 0; x < width; x++)
-    //        {
-    //            for (int y = 0; y < height; y++)
-    //            {
-    //                Gizmos.color = (map[x, y] == 1) ? new Color(0, 0, 0, 1f) : new Color(1, 1, 1, 1f);
-    //                Vector3 pos = new Vector3(-width / 2 + x + .5f, 0, -height / 2 + y + .5f);
-    //                pos.y = pos.y + 2;
-    //                Gizmos.DrawCube(pos, Vector3.one);
-    //            }
-    //        }
-    //    }
-    //}
 
 
 }

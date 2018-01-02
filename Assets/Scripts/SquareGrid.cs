@@ -4,7 +4,7 @@ public class SquareGrid
 {
     public Square[,] squares;
 
-    public SquareGrid(int[,] map, float squareSize)
+    public SquareGrid(TileType[,] map, float squareSize)
     {
         int nodeCountX = map.GetLength(0);
         int nodeCountY = map.GetLength(1);
@@ -18,7 +18,7 @@ public class SquareGrid
             for (int y = 0; y < nodeCountY; y++)
             {
                 Vector3 pos = new Vector3(-mapWidth / 2 + x * squareSize + squareSize / 2, 0, -mapHeight / 2 + y * squareSize + squareSize / 2);
-                controlNodes[x, y] = new ControlNode(pos, map[x, y] == 1, squareSize);
+                controlNodes[x, y] = new ControlNode(pos, map[x, y] == TileType.Wall, squareSize);
             }
         }
 
